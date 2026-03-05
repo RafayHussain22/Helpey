@@ -1,0 +1,21 @@
+from datetime import datetime
+
+from sqlalchemy import Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import BaseModel
+
+
+class User(BaseModel):
+    __tablename__ = "users"
+
+    email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    picture_url: Mapped[str | None] = mapped_column(Text)
+    google_id: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    google_access_token: Mapped[str | None] = mapped_column(Text)
+    google_refresh_token: Mapped[str | None] = mapped_column(Text)
+    token_expires_at: Mapped[datetime | None] = mapped_column()
+
+    documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
+    chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")

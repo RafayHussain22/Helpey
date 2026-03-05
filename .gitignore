@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Build output
+dist/
+build/
+*.egg-info/
+
+# Environment
+.env.local
+.env.production
+.env.*.local
+
+# Data (local dev)
+backend/chroma_data/
+backend/uploads/
+backend/celery.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# pgvector (local build, not part of project)
+pgvector/
+
+# Python
+*.egg
+pip-log.txt
+pip-delete-this-directory.txt
+
+# UV
+.python-version
