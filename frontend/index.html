@@ -11,6 +11,9 @@
       rel="stylesheet"
     />
     <title>Helpey</title>
+    <script>
+      if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+    </script>
   </head>
   <body>
     <div id="root"></div>

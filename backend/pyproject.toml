@@ -28,7 +28,7 @@ dependencies = [
     "chromadb>=1.0",
     # Document processing
     "docling>=2.0",
-    "chonkie>=1.0",
+    "chonkie[st]>=1.0",
     "pymupdf>=1.25",
     "python-docx>=1.1",
     "openpyxl>=3.1",

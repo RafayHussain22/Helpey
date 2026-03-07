@@ -4,10 +4,10 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center">
+    <div className="flex min-h-screen items-center justify-center dark:bg-dark-bg">
       <div className="w-full max-w-sm space-y-6 text-center">
-        <h1 className="text-3xl font-bold text-gray-900">Helpey</h1>
-        <p className="text-gray-600">
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Helpey</h1>
+        <p className="text-gray-600 dark:text-gray-400">
           Sign in to chat with your Google Drive files.
         </p>
         <button
