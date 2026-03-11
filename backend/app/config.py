@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "sqla+sqlite:///celery.db"
     CELERY_RESULT_BACKEND: str = "db+sqlite:///celery_results.db"
 
+    # WorkOS SSO
+    WORKOS_API_KEY: str = ""
+    WORKOS_CLIENT_ID: str = ""
+    WORKOS_ORGANIZATION_ID: str = ""
+    WORKOS_REDIRECT_URI: str = "http://localhost:8000/api/auth/workos/callback"
+
     # Frontend URL (for CORS)
     FRONTEND_URL: str = "http://localhost:5173"
 

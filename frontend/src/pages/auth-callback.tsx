@@ -8,7 +8,7 @@ export default function AuthCallbackPage() {
   const setUser = useAuthStore((s) => s.setUser);
 
   useEffect(() => {
-    apiFetch<{ id: string; email: string; name: string; picture: string }>(
+    apiFetch<{ id: string; email: string; name: string; picture: string; google_drive_connected: boolean }>(
       '/auth/me',
     )
       .then((user) => {

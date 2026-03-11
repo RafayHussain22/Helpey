@@ -19,6 +19,8 @@ dependencies = [
     "cuid2>=2.0",
     # HTTP client
     "httpx>=0.28",
+    # WorkOS SSO
+    "workos>=5.0",
     # Task queue
     "celery>=5.4",
     # AI

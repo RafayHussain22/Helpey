@@ -117,6 +117,46 @@ export default function DrivePicker({ open, onClose }: Props) {
     );
   };
 
+  // Poll for status updates on syncing files
+  const pollRef = useRef<ReturnType<typeof setInterval>>();
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = undefined;
+    }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const params = new URLSearchParams();
+        if (search) params.set('search', search);
+        const qs = params.toString();
+        const data = await apiFetch<DriveFilesResponse>(
+          `/documents/drive/files${qs ? `?${qs}` : ''}`,
+        );
+        setFiles(data.files);
+        setNextPageToken(data.nextPageToken);
+
+        // Stop polling when no files are still syncing/downloading
+        const stillProcessing = data.files.some(
+          (f) => f.synced && f.sync_status && !['processed', 'failed'].includes(f.sync_status),
+        );
+        if (!stillProcessing) stopPolling();
+      } catch {
+        stopPolling();
+      }
+    }, 3000);
+  }, [search, stopPolling]);
+
+  // Clean up polling on unmount or close
+  useEffect(() => {
+    if (!open) stopPolling();
+    return () => stopPolling();
+  }, [open, stopPolling]);
+
   const handleSync = async () => {
     if (selected.size === 0) return;
     setSyncing(true);
@@ -131,6 +171,7 @@ export default function DrivePicker({ open, onClose }: Props) {
         ),
       );
       setSelected(new Set());
+      startPolling();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sync failed');
     } finally {

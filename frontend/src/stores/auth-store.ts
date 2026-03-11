@@ -5,6 +5,7 @@ interface User {
   email: string;
   name: string;
   picture: string;
+  google_drive_connected: boolean;
 }
 
 interface AuthState {

@@ -5,6 +5,7 @@ import { useChatStore, type Chat, type ChatMessage } from '@/stores/chat-store';
 import ChatSidebar from '@/components/chat-sidebar';
 import ChatThread from '@/components/chat-thread';
 import ChatInput from '@/components/chat-input';
+import DriveConnectBanner from '@/components/drive-connect-banner';
 
 export default function ChatPage() {
   const {
@@ -87,6 +88,7 @@ export default function ChatPage() {
     <div className="flex h-screen bg-background dark:bg-dark-bg">
       <ChatSidebar />
       <div className="flex flex-1 flex-col">
+        <DriveConnectBanner />
         <ChatThread />
         <ChatInput onSend={handleSend} disabled={isStreaming} />
       </div>
