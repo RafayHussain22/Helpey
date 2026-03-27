@@ -25,9 +25,9 @@ dependencies = [
     "celery>=5.4",
     # AI
     "anthropic>=0.52",
-    "google-generativeai>=0.8",
+    "openai>=1.0",
     # Vector store
-    "chromadb>=1.0",
+    "pgvector>=0.3",
     # Document processing
     "docling>=2.0",
     "chonkie[st]>=1.0",

@@ -61,11 +61,13 @@ export default function ChatPage() {
     // Stream assistant response
     setStreaming(true);
 
+    let gotDone = false;
     try {
       await streamMessage(chatId, content, {
         onSources: (sources) => setStreamingSources(sources),
         onText: (chunk) => appendStreamingContent(chunk),
         onDone: (messageId) => {
+          gotDone = true;
           finalizeStreaming(messageId);
           // Update chat title in sidebar
           const chat = chats.find((c) => c.id === chatId);
@@ -74,13 +76,20 @@ export default function ChatPage() {
           }
         },
         onError: (error) => {
+          gotDone = true;
           console.error('Stream error:', error);
           setError(error);
         },
       });
     } catch (err) {
+      gotDone = true;
       console.error('Failed to send message:', err);
       setError(err instanceof Error ? err.message : 'Failed to send message');
+    } finally {
+      // Safety net: if stream ended without done/error, reset streaming state
+      if (!gotDone) {
+        setStreaming(false);
+      }
     }
   };
 

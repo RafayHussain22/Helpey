@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -158,7 +159,7 @@ async def send_message(
     document_names: dict[str, str] = {}
 
     if classification == "search":
-        chunks = query_chunks(user.id, body.content, n_results=5)
+        chunks = await query_chunks(db, user.id, user.email, body.content, n_results=5)
 
         if chunks:
             # Get document names for citations
@@ -191,7 +192,13 @@ async def send_message(
             else:
                 gen = stream_chitchat(body.content, chat_history)
 
-            for text_chunk in gen:
+            # Run sync generator in a thread to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+            it = iter(gen)
+            while True:
+                text_chunk = await loop.run_in_executor(None, next, it, None)
+                if text_chunk is None:
+                    break
                 full_response.append(text_chunk)
                 yield f"data: {json.dumps({'type': 'text', 'content': text_chunk})}\n\n"
 
@@ -201,8 +208,8 @@ async def send_message(
             return
 
         # Save assistant message
-        assistant_content = "".join(full_response)
-        async with db.begin():
+        try:
+            assistant_content = "".join(full_response)
             assistant_msg = Message(
                 chat_id=chat_id,
                 user_id=user.id,
@@ -211,8 +218,13 @@ async def send_message(
                 sources=sources or None,
             )
             db.add(assistant_msg)
+            await db.commit()
+            await db.refresh(assistant_msg)
 
-        yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'message_id': assistant_msg.id})}\n\n"
+        except Exception as e:
+            logger.exception("Failed to save assistant message")
+            yield f"data: {json.dumps({'type': 'error', 'content': 'Failed to save response'})}\n\n"
 
     return StreamingResponse(
         event_stream(),

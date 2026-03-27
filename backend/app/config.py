@@ -24,11 +24,8 @@ class Settings(BaseSettings):
     # Anthropic
     ANTHROPIC_API_KEY: str = ""
 
-    # Google Gemini (embeddings)
-    GEMINI_API_KEY: str = ""
-
-    # ChromaDB
-    CHROMA_PERSIST_DIR: str = "./chroma_data"
+    # OpenAI (embeddings)
+    OPENAI_API_KEY: str = ""
 
     # File uploads
     UPLOADS_DIR: str = "./uploads"

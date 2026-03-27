@@ -1,18 +1,10 @@
-"""Answer synthesis using Gemini with streaming."""
+"""Answer synthesis using Anthropic Claude with streaming."""
 import logging
 from collections.abc import Generator
 
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import anthropic
 
 from app.config import settings
-
-SAFETY_SETTINGS = {
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-}
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +36,12 @@ def build_context(chunks: list[dict], document_names: dict[str, str]) -> str:
 
 
 def _build_history(chat_history: list[dict]) -> list[dict]:
-    """Convert chat history to Gemini format."""
-    history = []
+    """Convert chat history to Anthropic messages format."""
+    messages = []
     for msg in chat_history[-10:]:
-        role = "user" if msg["role"] == "user" else "model"
-        history.append({"role": role, "parts": [msg["content"]]})
-    return history
+        role = "user" if msg["role"] == "user" else "assistant"
+        messages.append({"role": role, "content": msg["content"]})
+    return messages
 
 
 def stream_answer(
@@ -58,15 +50,11 @@ def stream_answer(
     document_names: dict[str, str],
     chat_history: list[dict],
 ) -> Generator[str, None, None]:
-    """Stream an answer using Gemini. Yields text chunks."""
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel(
-        "gemini-2.5-flash-lite",
-        system_instruction=SYSTEM_PROMPT,
-    )
+    """Stream an answer using Anthropic Claude. Yields text chunks."""
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
     context = build_context(chunks, document_names)
-    history = _build_history(chat_history)
+    messages = _build_history(chat_history)
 
     if context:
         user_content = f"""Here are relevant excerpts from the user's documents:
@@ -79,15 +67,16 @@ User question: {query}"""
     else:
         user_content = query
 
-    chat = model.start_chat(history=history)
-    response = chat.send_message(user_content, stream=True, safety_settings=SAFETY_SETTINGS)
+    messages.append({"role": "user", "content": user_content})
 
-    for chunk in response:
-        try:
-            if chunk.text:
-                yield chunk.text
-        except (ValueError, IndexError):
-            continue
+    with client.messages.stream(
+        model="claude-sonnet-4-20250514",
+        max_tokens=4096,
+        system=SYSTEM_PROMPT,
+        messages=messages,
+    ) as stream:
+        for text in stream.text_stream:
+            yield text
 
 
 def stream_chitchat(
@@ -95,19 +84,16 @@ def stream_chitchat(
     chat_history: list[dict],
 ) -> Generator[str, None, None]:
     """Stream a chitchat response (no document context needed)."""
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel(
-        "gemini-2.5-flash-lite",
-        system_instruction=CHITCHAT_SYSTEM,
-    )
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-    history = _build_history(chat_history)
-    chat = model.start_chat(history=history)
-    response = chat.send_message(query, stream=True, safety_settings=SAFETY_SETTINGS)
+    messages = _build_history(chat_history)
+    messages.append({"role": "user", "content": query})
 
-    for chunk in response:
-        try:
-            if chunk.text:
-                yield chunk.text
-        except (ValueError, IndexError):
-            continue
+    with client.messages.stream(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1024,
+        system=CHITCHAT_SYSTEM,
+        messages=messages,
+    ) as stream:
+        for text in stream.text_stream:
+            yield text

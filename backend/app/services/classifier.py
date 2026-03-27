@@ -1,17 +1,9 @@
-"""Query classification using Gemini — determines if a question needs RAG."""
+"""Query classification using Anthropic Claude — determines if a question needs RAG."""
 import logging
 
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import anthropic
 
 from app.config import settings
-
-SAFETY_SETTINGS = {
-    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-}
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +25,18 @@ Examples:
 
 def classify_query(query: str) -> str:
     """Returns 'search' or 'chitchat'."""
-    if not settings.GEMINI_API_KEY:
+    if not settings.ANTHROPIC_API_KEY:
         return "search"
 
     try:
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel(
-            "gemini-2.5-flash-lite",
-            system_instruction=SYSTEM_PROMPT,
+        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=10,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": query}],
         )
-        response = model.generate_content(query, safety_settings=SAFETY_SETTINGS)
-        if not response.candidates or not response.candidates[0].content.parts:
-            logger.warning("Empty classifier response, defaulting to search")
-            return "search"
-        result = response.candidates[0].content.parts[0].text.strip().lower()
+        result = response.content[0].text.strip().lower()
         classification = "search" if "search" in result else "chitchat"
         logger.info("Query classified as '%s': %s", classification, query[:80])
         return classification

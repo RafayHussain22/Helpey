@@ -6,6 +6,7 @@ interface User {
   name: string;
   picture: string;
   google_drive_connected: boolean;
+  initial_sync_done: boolean;
 }
 
 interface AuthState {

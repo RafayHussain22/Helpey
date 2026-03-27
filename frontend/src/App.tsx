@@ -10,7 +10,7 @@ export default function App() {
   const setUser = useAuthStore((s) => s.setUser);
 
   useEffect(() => {
-    apiFetch<{ id: string; email: string; name: string; picture: string; google_drive_connected: boolean }>(
+    apiFetch<{ id: string; email: string; name: string; picture: string; google_drive_connected: boolean; initial_sync_done: boolean }>(
       '/auth/me',
     )
       .then((user) => setUser(user))

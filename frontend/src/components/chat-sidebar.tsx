@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth-store';
 import { useChatStore, type Chat } from '@/stores/chat-store';
-import DrivePicker from '@/components/drive-picker';
+import SyncDashboard from '@/components/sync-dashboard';
 
 function useTheme() {
   const [dark, setDark] = useState(() => {
@@ -22,7 +22,6 @@ export default function ChatSidebar() {
   const user = useAuthStore((s) => s.user);
   const { chats, activeChatId, setChats, addChat, removeChat, setActiveChatId, setMessages } =
     useChatStore();
-  const [driveOpen, setDriveOpen] = useState(false);
   const [dark, toggleTheme] = useTheme();
 
   useEffect(() => {
@@ -53,7 +52,7 @@ export default function ChatSidebar() {
   return (
     <div className="flex h-full w-64 flex-col border-r border-gray-200 bg-white dark:border-dark-border dark:bg-dark-surface">
       {/* Top buttons */}
-      <div className="space-y-1.5 p-3">
+      <div className="p-3">
         <button
           onClick={handleNewChat}
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors dark:border-dark-border dark:text-gray-300 dark:hover:bg-dark-bg"
@@ -63,16 +62,14 @@ export default function ChatSidebar() {
           </svg>
           New Chat
         </button>
-        <button
-          onClick={() => setDriveOpen(true)}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary/10 px-3 py-2 text-sm font-medium text-primary-dark hover:bg-primary/20 transition-colors dark:bg-primary/20 dark:text-primary-light dark:hover:bg-primary/30"
-        >
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-          </svg>
-          Sync Drive Files
-        </button>
       </div>
+
+      {/* Sync dashboard */}
+      {user?.google_drive_connected && (
+        <div className="border-b border-gray-200 dark:border-dark-border">
+          <SyncDashboard />
+        </div>
+      )}
 
       {/* Chat list */}
       <div className="flex-1 overflow-y-auto px-2">
@@ -134,8 +131,6 @@ export default function ChatSidebar() {
           </button>
         </div>
       </div>
-
-      <DrivePicker open={driveOpen} onClose={() => setDriveOpen(false)} />
     </div>
   );
 }

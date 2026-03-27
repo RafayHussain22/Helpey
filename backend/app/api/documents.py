@@ -1,8 +1,6 @@
 import logging
-from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,7 +8,6 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.document import Document
 from app.models.user import User
-from app.services.google_drive import list_drive_files, refresh_access_token
 from app.tasks.process_document import process_document
 from app.tasks.sync_drive import sync_user_drive
 
@@ -18,64 +15,30 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
-
-@router.get("/drive/files")
-async def get_drive_files(
-    page_token: str | None = Query(None),
-    search: str | None = Query(None),
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List files from user's Google Drive, marking already-synced ones."""
-    access_token = await refresh_access_token(user, db)
-    data = await list_drive_files(access_token, page_token, search)
-
-    # Get already-synced google file IDs
-    result = await db.execute(
-        select(Document.google_file_id, Document.status)
-        .where(Document.user_id == user.id)
-    )
-    synced_map = dict(result.all())
-
-    # Annotate files with sync status
-    for f in data.get("files", []):
-        f["synced"] = f["id"] in synced_map
-        f["sync_status"] = synced_map.get(f["id"])
-
-    return data
-
-
-class SyncSelectedRequest(BaseModel):
-    file_ids: list[str]
+# Statuses that indicate a sync is actively running
+_ACTIVE_STATUSES = ("syncing", "downloaded", "processing")
 
 
 @router.post("/sync")
-async def sync_selected_files(
-    body: SyncSelectedRequest,
+async def trigger_sync(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Sync selected files from Google Drive."""
-    if not body.file_ids:
-        raise HTTPException(status_code=400, detail="No files selected")
-    if len(body.file_ids) > 50:
-        raise HTTPException(status_code=400, detail="Maximum 50 files per sync")
+    """Trigger a full Drive sync. No request body needed."""
+    if not user.google_refresh_token:
+        raise HTTPException(status_code=400, detail="Google Drive not connected")
 
-    access_token = await refresh_access_token(user, db)
-
-    # Filter out already-synced files
+    # Check if a sync is already running for this user
     result = await db.execute(
-        select(Document.google_file_id)
-        .where(Document.user_id == user.id, Document.google_file_id.in_(body.file_ids))
+        select(func.count())
+        .where(Document.synced_by_user_id == user.id, Document.status.in_(_ACTIVE_STATUSES))
     )
-    existing = {row[0] for row in result.all()}
-    new_file_ids = [fid for fid in body.file_ids if fid not in existing]
+    active_count = result.scalar()
+    if active_count and active_count > 0:
+        return {"status": "already_running", "active_files": active_count}
 
-    if not new_file_ids:
-        return {"status": "already_synced", "synced": 0}
-
-    task = sync_user_drive.delay(user.id, access_token, new_file_ids)
-    return {"task_id": task.id, "status": "started", "file_count": len(new_file_ids)}
+    task = sync_user_drive.delay(user.id)
+    return {"task_id": task.id, "status": "started"}
 
 
 @router.get("")
@@ -83,10 +46,10 @@ async def list_documents(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List user's synced documents."""
+    """List documents synced by this user."""
     result = await db.execute(
         select(Document)
-        .where(Document.user_id == user.id)
+        .where(Document.synced_by_user_id == user.id)
         .order_by(Document.created_at.desc())
     )
     docs = result.scalars().all()
@@ -113,7 +76,7 @@ async def reprocess_document(
 ):
     """Re-trigger processing for a failed document."""
     result = await db.execute(
-        select(Document).where(Document.id == document_id, Document.user_id == user.id)
+        select(Document).where(Document.id == document_id)
     )
     doc = result.scalar_one_or_none()
     if not doc:
@@ -125,6 +88,29 @@ async def reprocess_document(
     return {"status": "queued", "document_id": doc.id}
 
 
+@router.post("/reprocess-failed")
+async def reprocess_all_failed(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-trigger processing for all failed documents."""
+    result = await db.execute(
+        select(Document)
+        .where(Document.status == "failed")
+    )
+    failed_docs = result.scalars().all()
+    if not failed_docs:
+        return {"status": "no_failed", "queued": 0}
+
+    for doc in failed_docs:
+        doc.status = "processing"
+        doc.error_message = None
+        process_document.delay(doc.id)
+    await db.commit()
+
+    return {"status": "queued", "queued": len(failed_docs)}
+
+
 @router.get("/sync/status")
 async def sync_status(
     user: User = Depends(get_current_user),
@@ -133,15 +119,29 @@ async def sync_status(
     """Get sync status summary."""
     result = await db.execute(
         select(Document.status, func.count())
-        .where(Document.user_id == user.id)
+        .where(Document.synced_by_user_id == user.id)
         .group_by(Document.status)
     )
     counts = dict(result.all())
+
+    pending = counts.get("pending", 0)
+    syncing = counts.get("syncing", 0)
+    downloaded = counts.get("downloaded", 0)
+    processing = counts.get("processing", 0)
+
+    # is_syncing is true if there are active documents OR the initial sync hasn't completed yet
+    # (the task may still be enumerating/downloading files from Drive)
+    is_syncing = (pending + syncing + downloaded + processing) > 0 or not user.initial_sync_done
+
     return {
+        "initial_sync_done": user.initial_sync_done,
+        "last_sync_at": user.last_sync_at.isoformat() if user.last_sync_at else None,
         "total": sum(counts.values()),
-        "pending": counts.get("pending", 0),
-        "syncing": counts.get("syncing", 0),
-        "downloaded": counts.get("downloaded", 0),
+        "pending": pending,
+        "syncing": syncing,
+        "downloaded": downloaded,
+        "processing": processing,
         "processed": counts.get("processed", 0),
         "failed": counts.get("failed", 0),
+        "is_syncing": is_syncing,
     }

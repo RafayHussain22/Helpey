@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(bind=True, max_retries=2)
 def process_document(self, document_id: str):
-    """Parse a document, chunk it, generate embeddings, and store in ChromaDB."""
+    """Parse a document, chunk it, generate embeddings, and store in pgvector."""
     with Session(sync_engine) as db:
         doc = db.get(Document, document_id)
         if not doc:
@@ -48,7 +48,7 @@ def process_document(self, document_id: str):
 
             # Step 3: Embed and store
             logger.info("Embedding %d chunks for document %s", len(chunks), doc.id)
-            count = store_chunks(doc.user_id, doc.id, chunks)
+            count = store_chunks(db, doc.id, chunks)
 
             doc.chunk_count = count
             doc.status = "processed"

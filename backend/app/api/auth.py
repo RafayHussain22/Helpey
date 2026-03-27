@@ -133,6 +133,11 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(user)
 
+    # Auto-trigger Drive sync for new users or users without initial sync
+    if not user.initial_sync_done and user.google_refresh_token:
+        from app.tasks.sync_drive import sync_user_drive
+        sync_user_drive.delay(user.id)
+
     response = RedirectResponse(settings.FRONTEND_URL, status_code=302)
     _set_auth_cookie(response, user.id)
     return response
@@ -242,6 +247,12 @@ async def google_connect_callback(
     user.token_expires_at = expires_at
 
     await db.commit()
+    await db.refresh(user)
+
+    # Auto-trigger Drive sync after connecting Drive
+    if not user.initial_sync_done and user.google_refresh_token:
+        from app.tasks.sync_drive import sync_user_drive
+        sync_user_drive.delay(user.id)
 
     return RedirectResponse(settings.FRONTEND_URL, status_code=302)
 
@@ -256,6 +267,7 @@ async def get_me(user: User = Depends(get_current_user)):
         "name": user.name,
         "picture": user.picture_url,
         "google_drive_connected": user.google_access_token is not None,
+        "initial_sync_done": user.initial_sync_done,
     }
 
 

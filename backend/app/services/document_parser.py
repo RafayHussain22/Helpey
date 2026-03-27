@@ -1,9 +1,10 @@
-"""3-tier document parsing: Docling -> PyMuPDF -> Gemini Vision (OCR)."""
+"""3-tier document parsing: Docling -> PyMuPDF -> Claude Vision (OCR)."""
 import base64
 import logging
 from pathlib import Path
 
-import google.generativeai as genai
+import anthropic
+
 import pymupdf
 
 from app.config import settings
@@ -51,48 +52,66 @@ def parse_with_pymupdf(file_path: str) -> str | None:
         return None
 
 
-def parse_with_gemini_vision(file_path: str) -> str | None:
-    """Tier 3: OCR using Gemini Vision for scanned/image-based documents."""
-    if not settings.GEMINI_API_KEY:
-        logger.warning("No Gemini API key, skipping Vision OCR for %s", file_path)
+def parse_with_claude_vision(file_path: str) -> str | None:
+    """Tier 3: OCR using Claude Vision for scanned/image-based documents."""
+    if not settings.ANTHROPIC_API_KEY:
+        logger.warning("No Anthropic API key, skipping Vision OCR for %s", file_path)
         return None
 
     try:
         path = Path(file_path)
         suffix = path.suffix.lower()
 
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-2.5-flash-lite")
-
         mime_map = {
-            ".pdf": "application/pdf",
             ".png": "image/png",
             ".jpg": "image/jpeg",
             ".jpeg": "image/jpeg",
             ".gif": "image/gif",
             ".webp": "image/webp",
+            ".pdf": "application/pdf",
         }
         mime_type = mime_map.get(suffix)
         if not mime_type:
-            logger.warning("Unsupported file type for Gemini Vision: %s", suffix)
+            logger.warning("Unsupported file type for Claude Vision: %s", suffix)
             return None
 
-        file_data = path.read_bytes()
-        response = model.generate_content([
-            {
-                "mime_type": mime_type,
-                "data": base64.standard_b64encode(file_data).decode("utf-8"),
-            },
-            "Extract all text content from this document. Preserve the structure (headings, lists, tables). Return only the extracted text, no commentary.",
-        ])
+        file_data = base64.standard_b64encode(path.read_bytes()).decode("utf-8")
+        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-        text = response.text
+        # Claude Vision uses image content blocks for images, document blocks for PDFs
+        if suffix == ".pdf":
+            content_block = {
+                "type": "document",
+                "source": {"type": "base64", "media_type": mime_type, "data": file_data},
+            }
+        else:
+            content_block = {
+                "type": "image",
+                "source": {"type": "base64", "media_type": mime_type, "data": file_data},
+            }
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=8192,
+            messages=[{
+                "role": "user",
+                "content": [
+                    content_block,
+                    {
+                        "type": "text",
+                        "text": "Extract all text content from this document. Preserve the structure (headings, lists, tables). Return only the extracted text, no commentary.",
+                    },
+                ],
+            }],
+        )
+
+        text = response.content[0].text
         if text and len(text.strip()) > 20:
-            logger.info("Gemini Vision parsed %s successfully (%d chars)", file_path, len(text))
+            logger.info("Claude Vision parsed %s successfully (%d chars)", file_path, len(text))
             return text
         return None
     except Exception as e:
-        logger.warning("Gemini Vision failed for %s: %s", file_path, e)
+        logger.warning("Claude Vision failed for %s: %s", file_path, e)
         return None
 
 
@@ -118,9 +137,9 @@ def parse_document(file_path: str) -> str:
         if text:
             return text
 
-    # Tier 3: Gemini Vision OCR (last resort for PDFs and images)
+    # Tier 3: Claude Vision OCR (last resort for PDFs and images)
     if suffix in (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"):
-        text = parse_with_gemini_vision(file_path)
+        text = parse_with_claude_vision(file_path)
         if text:
             return text
 

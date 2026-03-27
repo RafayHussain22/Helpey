@@ -76,11 +76,13 @@ async def list_drive_files(access_token: str, page_token: str | None = None, sea
     if search:
         q_parts.append(f"name contains '{search}'")
 
-    params: dict[str, str | int] = {
+    params: dict[str, str | int | bool] = {
         "pageSize": 100,
-        "fields": "nextPageToken,files(id,name,mimeType,size,modifiedTime)",
+        "fields": "nextPageToken,files(id,name,mimeType,size,modifiedTime,permissions(id,type,emailAddress,domain,role))",
         "q": " and ".join(q_parts),
         "orderBy": "modifiedTime desc",
+        "includeItemsFromAllDrives": True,
+        "supportsAllDrives": True,
     }
     if page_token:
         params["pageToken"] = page_token
@@ -93,6 +95,80 @@ async def list_drive_files(access_token: str, page_token: str | None = None, sea
         )
         res.raise_for_status()
         return res.json()
+
+
+def refresh_access_token_sync(user_id: str) -> str:
+    """Synchronous token refresh for use in Celery tasks."""
+    from sqlalchemy.orm import Session
+    from app.db.engine import sync_engine
+
+    with Session(sync_engine) as db:
+        user = db.get(User, user_id)
+        if not user or not user.google_refresh_token:
+            raise ValueError("No refresh token available. User must re-authenticate.")
+
+        with httpx.Client() as client:
+            res = client.post(GOOGLE_TOKEN_URL, data={
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "refresh_token": user.google_refresh_token,
+                "grant_type": "refresh_token",
+            })
+            if res.status_code != 200:
+                logger.error("Sync token refresh failed: %s %s", res.status_code, res.text[:200])
+                return user.google_access_token
+            tokens = res.json()
+
+        new_token = tokens["access_token"]
+        user.google_access_token = new_token
+        if "expires_in" in tokens:
+            user.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
+        db.commit()
+
+        logger.info("Refreshed token (sync) for user %s", user_id)
+        return new_token
+
+
+def list_all_drive_files_sync(access_token: str) -> list[dict]:
+    """Paginate through ALL Drive files (including shared drives and shared with me).
+
+    Returns a flat list of file metadata dicts for supported MIME types only.
+    """
+    all_files: list[dict] = []
+    # Build MIME type filter for the query
+    mime_filters = " or ".join(f"mimeType='{mt}'" for mt in SUPPORTED_MIME_TYPES)
+    q = f"trashed=false and ({mime_filters})"
+
+    with httpx.Client(timeout=120) as client:
+        page_token = None
+        while True:
+            params: dict[str, str | int | bool] = {
+                "pageSize": 1000,
+                "fields": "nextPageToken,files(id,name,mimeType,size,modifiedTime,permissions(id,type,emailAddress,domain,role))",
+                "q": q,
+                "includeItemsFromAllDrives": True,
+                "supportsAllDrives": True,
+                "corpora": "allDrives",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            res = client.get(
+                DRIVE_FILES_URL,
+                params=params,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            res.raise_for_status()
+            data = res.json()
+
+            all_files.extend(data.get("files", []))
+
+            page_token = data.get("nextPageToken")
+            if not page_token:
+                break
+
+    logger.info("Enumerated %d supported files from Drive", len(all_files))
+    return all_files
 
 
 async def download_drive_file(access_token: str, file_id: str, mime_type: str, dest_dir: str) -> tuple[str, str]:
