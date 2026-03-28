@@ -1,62 +1,87 @@
-"""In-memory cache of allowed document IDs per user for fast permission filtering."""
+"""Shared in-memory permission cache with cross-process invalidation via DB version counter."""
 import logging
-from datetime import datetime, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.models.document import Document
 
 logger = logging.getLogger(__name__)
 
-# {user_id: {"doc_ids": set[str], "built_at": datetime}}
-_cache: dict[str, dict] = {}
+# Shared cache: {doc_id: permissions} or None = not loaded
+_cache: dict[str, list | None] | None = None
+_cache_version: int | None = None
 
 
-def build_allowed_docs(db: Session, user_id: str, user_email: str) -> set[str]:
-    """Query the DB for all document IDs this user can access, cache the result."""
-    user_domain = user_email.split("@")[1] if "@" in user_email else None
+def _get_db_version(db: Session) -> int:
+    """Read the current cache version from the DB."""
+    result = db.execute(text("SELECT version FROM cache_version WHERE id = 1"))
+    row = result.one_or_none()
+    return row[0] if row else 0
 
-    permission_filters = [
-        Document.permissions.is_(None),
-        Document.permissions.contains([{"type": "anyone"}]),
-        Document.permissions.contains([{"type": "user", "emailAddress": user_email}]),
-    ]
-    if user_domain:
-        permission_filters.append(
-            Document.permissions.contains([{"type": "domain", "domain": user_domain}]),
-        )
+
+def _load_cache(db: Session) -> dict[str, list | None]:
+    """Load all processed documents and their permissions into the shared cache."""
+    global _cache, _cache_version
 
     result = db.execute(
-        select(Document.id)
+        select(Document.id, Document.permissions)
         .where(Document.status == "processed")
-        .where(or_(*permission_filters))
     )
-    doc_ids = {row[0] for row in result.all()}
+    _cache = {row[0]: row[1] for row in result.all()}
+    _cache_version = _get_db_version(db)
 
-    _cache[user_id] = {
-        "doc_ids": doc_ids,
-        "built_at": datetime.now(timezone.utc),
-    }
-    logger.info("Built permission cache for user %s: %d accessible documents", user_id, len(doc_ids))
-    return doc_ids
+    logger.info("Loaded permission cache: %d documents, version %d", len(_cache), _cache_version)
+    return _cache
+
+
+def _matches_user(permissions: list | None, user_email: str, user_domain: str | None) -> bool:
+    """Check if a document's permissions grant access to a user."""
+    if permissions is None:
+        return True
+    for perm in permissions:
+        perm_type = perm.get("type")
+        if perm_type == "anyone":
+            return True
+        if perm_type == "user" and perm.get("emailAddress") == user_email:
+            return True
+        if perm_type == "domain" and user_domain and perm.get("domain") == user_domain:
+            return True
+    return False
 
 
 def get_allowed_docs(db: Session, user_id: str, user_email: str) -> set[str]:
-    """Get cached allowed doc IDs, building the cache if needed."""
-    entry = _cache.get(user_id)
-    if entry is not None:
-        return entry["doc_ids"]
-    return build_allowed_docs(db, user_id, user_email)
+    """Get document IDs this user can access, using the shared cache."""
+    global _cache, _cache_version
 
+    db_version = _get_db_version(db)
+    if _cache is None or _cache_version != db_version:
+        _load_cache(db)
 
-def invalidate(user_id: str) -> None:
-    """Clear the cache for a user. Call after sync completes."""
-    _cache.pop(user_id, None)
-    logger.info("Invalidated permission cache for user %s", user_id)
+    user_domain = user_email.split("@")[1] if "@" in user_email else None
+    allowed = {
+        doc_id
+        for doc_id, permissions in _cache.items()
+        if _matches_user(permissions, user_email, user_domain)
+    }
+
+    logger.info("User %s (%s): %d accessible documents", user_id, user_email, len(allowed))
+    return allowed
 
 
 def invalidate_all() -> None:
-    """Clear the entire permission cache. Call after any sync completes since documents are shared."""
-    _cache.clear()
-    logger.info("Invalidated entire permission cache")
+    """Increment the DB version counter so all processes reload on next query.
+
+    Also clears the local cache for the current process.
+    """
+    global _cache, _cache_version
+
+    from app.db.engine import sync_engine
+
+    with Session(sync_engine) as db:
+        db.execute(text("UPDATE cache_version SET version = version + 1 WHERE id = 1"))
+        db.commit()
+
+    _cache = None
+    _cache_version = None
+    logger.info("Invalidated permission cache (incremented DB version)")
